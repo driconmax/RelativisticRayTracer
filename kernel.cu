@@ -1,131 +1,78 @@
-﻿
-#include "cuda_runtime.h"
-#include "device_launch_parameters.h"
+﻿#include <cuda_runtime.h>
+#include <cstdio>
+#include <vector>
+#include <fstream>
+#include <algorithm>
 
-#include <stdio.h>
+struct uchar3_ { unsigned char x, y, z; };
 
-cudaError_t addWithCuda(int *c, const int *a, const int *b, unsigned int size);
-
-__global__ void addKernel(int *c, const int *a, const int *b)
+__global__ void renderGradient(uchar3_* out, int w, int h)
 {
-    int i = threadIdx.x;
-    c[i] = a[i] + b[i];
+    int x = (int)(blockIdx.x * blockDim.x + threadIdx.x);
+    int y = (int)(blockIdx.y * blockDim.y + threadIdx.y);
+    if (x >= w || y >= h) return;
+
+    float u = (x + 0.5f) / (float)w;
+    float v = (y + 0.5f) / (float)h;
+
+    // Simple gradient + vignette-ish
+    float r = u;
+    float g = v;
+    float b = 0.2f + 0.8f * (1.0f - (u - 0.5f) * (u - 0.5f) - (v - 0.5f) * (v - 0.5f));
+
+    r = fminf(fmaxf(r, 0.0f), 1.0f);
+    g = fminf(fmaxf(g, 0.0f), 1.0f);
+    b = fminf(fmaxf(b, 0.0f), 1.0f);
+
+    int idx = y * w + x;
+    out[idx].x = (unsigned char)(255.0f * r);
+    out[idx].y = (unsigned char)(255.0f * g);
+    out[idx].z = (unsigned char)(255.0f * b);
+}
+
+static void writePPM(const char* path, const std::vector<uchar3_>& pixels, int w, int h)
+{
+    std::ofstream f(path, std::ios::binary);
+    f << "P6\n" << w << " " << h << "\n255\n";
+    f.write(reinterpret_cast<const char*>(pixels.data()), (std::streamsize)pixels.size() * 3);
+    f.close();
 }
 
 int main()
 {
+    int w = 800, h = 450;
+
+    // CUDA device check (optional, but nice)
     int count = 0;
-    cudaError_t err = cudaGetDeviceCount(&count);
-    printf("cudaGetDeviceCount: %d (%s)\n", (int)err, cudaGetErrorString(err));
-    printf("Device count: %d\n", count);
-
-    for (int i = 0; i < count; i++) {
-        cudaDeviceProp p{};
-        cudaGetDeviceProperties(&p, i);
-        printf("[%d] %s, cc %d.%d\n", i, p.name, p.major, p.minor);
+    cudaGetDeviceCount(&count);
+    if (count <= 0) {
+        printf("No CUDA devices found.\n");
+        return 1;
     }
-    const int arraySize = 5;
-    const int a[arraySize] = { 1, 2, 3, 4, 5 };
-    const int b[arraySize] = { 10, 20, 30, 40, 50 };
-    int c[arraySize] = { 0 };
+    cudaSetDevice(0);
 
-    // Add vectors in parallel.
-    cudaError_t cudaStatus = addWithCuda(c, a, b, arraySize);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "addWithCuda failed!");
+    // Allocate device output
+    uchar3_* d_out = nullptr;
+    size_t bytes = (size_t)w * (size_t)h * sizeof(uchar3_);
+    cudaMalloc((void**)&d_out, bytes);
+
+    // Launch
+    dim3 block(16, 16);
+    dim3 grid((w + block.x - 1) / block.x, (h + block.y - 1) / block.y);
+    renderGradient <<<grid, block >>> (d_out, w, h);
+    cudaError_t err = cudaDeviceSynchronize();
+    if (err != cudaSuccess) {
+        printf("Kernel failed: %s\n", cudaGetErrorString(err));
+        cudaFree(d_out);
         return 1;
     }
 
-    printf("{1,2,3,4,5} + {10,20,30,40,50} = {%d,%d,%d,%d,%d}\n",
-        c[0], c[1], c[2], c[3], c[4]);
+    // Copy back and write
+    std::vector<uchar3_> host((size_t)w * (size_t)h);
+    cudaMemcpy(host.data(), d_out, bytes, cudaMemcpyDeviceToHost);
+    cudaFree(d_out);
 
-    // cudaDeviceReset must be called before exiting in order for profiling and
-    // tracing tools such as Nsight and Visual Profiler to show complete traces.
-    cudaStatus = cudaDeviceReset();
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaDeviceReset failed!");
-        return 1;
-    }
-
+    writePPM("output.ppm", host, w, h);
+    printf("Wrote output.ppm (%dx%d)\n", w, h);
     return 0;
-}
-
-// Helper function for using CUDA to add vectors in parallel.
-cudaError_t addWithCuda(int *c, const int *a, const int *b, unsigned int size)
-{
-    int *dev_a = 0;
-    int *dev_b = 0;
-    int *dev_c = 0;
-    cudaError_t cudaStatus;
-
-    // Choose which GPU to run on, change this on a multi-GPU system.
-    cudaStatus = cudaSetDevice(0);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaSetDevice failed!  Do you have a CUDA-capable GPU installed?");
-        goto Error;
-    }
-
-    // Allocate GPU buffers for three vectors (two input, one output)    .
-    cudaStatus = cudaMalloc((void**)&dev_c, size * sizeof(int));
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMalloc failed!");
-        goto Error;
-    }
-
-    cudaStatus = cudaMalloc((void**)&dev_a, size * sizeof(int));
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMalloc failed!");
-        goto Error;
-    }
-
-    cudaStatus = cudaMalloc((void**)&dev_b, size * sizeof(int));
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMalloc failed!");
-        goto Error;
-    }
-
-    // Copy input vectors from host memory to GPU buffers.
-    cudaStatus = cudaMemcpy(dev_a, a, size * sizeof(int), cudaMemcpyHostToDevice);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMemcpy failed!");
-        goto Error;
-    }
-
-    cudaStatus = cudaMemcpy(dev_b, b, size * sizeof(int), cudaMemcpyHostToDevice);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMemcpy failed!");
-        goto Error;
-    }
-
-    // Launch a kernel on the GPU with one thread for each element.
-    addKernel<<<1, size>>>(dev_c, dev_a, dev_b);
-
-    // Check for any errors launching the kernel
-    cudaStatus = cudaGetLastError();
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "addKernel launch failed: %s\n", cudaGetErrorString(cudaStatus));
-        goto Error;
-    }
-    
-    // cudaDeviceSynchronize waits for the kernel to finish, and returns
-    // any errors encountered during the launch.
-    cudaStatus = cudaDeviceSynchronize();
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus);
-        goto Error;
-    }
-
-    // Copy output vector from GPU buffer to host memory.
-    cudaStatus = cudaMemcpy(c, dev_c, size * sizeof(int), cudaMemcpyDeviceToHost);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMemcpy failed!");
-        goto Error;
-    }
-
-Error:
-    cudaFree(dev_c);
-    cudaFree(dev_a);
-    cudaFree(dev_b);
-    
-    return cudaStatus;
 }
