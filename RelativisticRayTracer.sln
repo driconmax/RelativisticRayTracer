@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.5.33502.453
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "RelativisticRayTracer", "RelativisticRayTracer.vcxproj", "{2F56A70C-1119-481B-9B52-181AC17037D2}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Release|x64 = Release|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{2F56A70C-1119-481B-9B52-181AC17037D2}.Debug|x64.ActiveCfg = Debug|x64
+		{2F56A70C-1119-481B-9B52-181AC17037D2}.Debug|x64.Build.0 = Debug|x64
+		{2F56A70C-1119-481B-9B52-181AC17037D2}.Release|x64.ActiveCfg = Release|x64
+		{2F56A70C-1119-481B-9B52-181AC17037D2}.Release|x64.Build.0 = Release|x64
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {02A0669A-18BC-493D-9129-AE59241017F2}
+	EndGlobalSection
+EndGlobal
