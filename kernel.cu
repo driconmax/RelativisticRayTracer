@@ -236,21 +236,36 @@ __device__ __forceinline__ float opUnion(float a, float b) { return fminf(a, b);
 struct SdfHit {
     float d;
     int id; // 1=sphere, 2=plane
+    float3 normal;
+    float sphereCenterDistance;
 };
 
 __device__ __forceinline__ SdfHit sceneSDF(const float3& p) {
     // Your 2 objects:
     // - sphere at origin
     // - tilted plane (like your disk plane)
+    float3 sphereCenter = make_float3(0.0f, 0.0f, 0.0f);
     float sphereR = 0.35f;
     float3 planeN = normalize3(make_float3(0.0f, 0.4f, 0.0f));
 
-    float ds = sdfSphere(p, sphereR);
+    float3 pFromSphereCenter = sub3(p, sphereCenter);
+    float sphereCenterDistance = length3(pFromSphereCenter);
+    float ds = sphereCenterDistance - sphereR;
     float dp = sdfPlane(p, planeN);
 
     SdfHit h;
-    if (ds < dp) { h.d = ds; h.id = 1; }
-    else { h.d = dp; h.id = 2; }
+    if (ds < dp) {
+        h.d = ds;
+        h.id = 1;
+        h.normal = normalize3(pFromSphereCenter); // normal from sphere center to current point
+    }
+    else {
+        h.d = dp;
+        h.id = 2;
+        h.normal = planeN;
+        //h.sphereCenterDistance = -1.0f; // not a sphere hit
+    }
+    h.sphereCenterDistance = sphereCenterDistance;
     return h;
 }
 
@@ -270,22 +285,40 @@ __device__ __forceinline__ float checkerXZ(float x, float z, float scale) {
 }
 
 // Raymarch
-__device__ __forceinline__ bool raymarch(const float3& ro, const float3& rd, float& t, int& id) {
+__device__ __forceinline__ bool raymarch(const float3& ro, const float3& rd, float& t, SdfHit& hitInfo) {
     const int   MAX_STEPS = 128;
     const float MAX_DIST = 500.0f;
+    const float GRAV_DIST = 1.0f;
     const float EPS = 1e-3f;
 
     t = 0.0f;
-    id = 0;
+    hitInfo.d = 0.0f;
+    hitInfo.id = 0;
+    hitInfo.normal = make_float3(0.0f, 0.0f, 0.0f);
+    hitInfo.sphereCenterDistance = -1.0f;
     float3 l_rd = rd;
     for (int i = 0; i < MAX_STEPS; i++) {
         float3 p = add3(ro, mul3(l_rd, t));
         SdfHit h = sceneSDF(p);
+        float gravD = h.sphereCenterDistance - GRAV_DIST;
 
-        if (h.d < EPS) { id = h.id; return true; }
+        // Signed-distance safe hit check (works even if camera starts inside a volume)
+        if (fabsf(h.d) < EPS) { hitInfo = h; return true; }
+
+        if (h.sphereCenterDistance < GRAV_DIST) {
+            //hitInfo = h;
+            //hitInfo.id = 1;
+            //hitInfo.d = gravD;
+            //hitInfo.normal = normalize3(sub3(p, make_float3(0.0f, 0.0f, 0.0f)));
+            //return true;
+
+            l_rd = add3(l_rd, mul3(h.normal, (-1 + (GRAV_DIST / h.sphereCenterDistance)) * 0.1f ));
+        }
 
 
         // If you zoom too far in you can get tiny steps; clamp helps stability
+        //float step = fmaxf(fminf(fabsf(h.d), fabsf(gravD)), 1e-4f);
+
         float step = fmaxf(h.d, 1e-4f);
         t += step;
 
@@ -379,13 +412,14 @@ __global__ void renderKernel(
         )
     );
 
-    float tHit; int id;
-    bool hit = raymarch(ro, rd, tHit, id);
+    float tHit;
+    SdfHit sdfHit;
+    bool hit = raymarch(ro, rd, tHit, sdfHit);
 
     float3 col = make_float3(0, 0, 0);
     if (hit) {
         float3 p = add3(ro, mul3(rd, tHit));
-        float3 n = estimateNormal(p);
+        float3 n = sdfHit.normal;
 
         float3 lightDir = normalize3(make_float3(0.4f, 0.8f, 0.2f));
         float diff = fmaxf(0.0f, dot3(n, lightDir));
@@ -395,7 +429,7 @@ __global__ void renderKernel(
         float3 halfV = normalize3(add3(lightDir, viewDir));
         float spec = powf(fmaxf(0.0f, dot3(n, halfV)), 64.0f);
 
-        if (id == 1) {
+        if (sdfHit.id == 1) {
             // Sphere (dark-ish, warm highlight)
             col = make_float3(0.05f, 0.05f, 0.06f);
             col = add3(col, mul3(make_float3(1.0f, 0.6f, 0.2f), diff * 0.30f));
