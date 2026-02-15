@@ -237,6 +237,7 @@ struct SdfHit {
     float d;
     int id; // 1=sphere, 2=plane
     float3 normal;
+    float3 snormal;
     float sphereCenterDistance;
 };
 
@@ -258,11 +259,13 @@ __device__ __forceinline__ SdfHit sceneSDF(const float3& p) {
         h.d = ds;
         h.id = 1;
         h.normal = normalize3(pFromSphereCenter); // normal from sphere center to current point
+        h.snormal = normalize3(pFromSphereCenter); // normal from sphere center to current point
     }
     else {
         h.d = dp;
         h.id = 2;
         h.normal = planeN;
+        h.snormal = normalize3(pFromSphereCenter);
         //h.sphereCenterDistance = -1.0f; // not a sphere hit
     }
     h.sphereCenterDistance = sphereCenterDistance;
@@ -288,7 +291,7 @@ __device__ __forceinline__ float checkerXZ(float x, float z, float scale) {
 __device__ __forceinline__ bool raymarch(const float3& ro, const float3& rd, float& t, SdfHit& hitInfo) {
     const int   MAX_STEPS = 128;
     const float MAX_DIST = 500.0f;
-    const float GRAV_DIST = 1.0f;
+    const float GRAV_DIST = 10.0f;
     const float EPS = 1e-3f;
 
     t = 0.0f;
@@ -312,7 +315,7 @@ __device__ __forceinline__ bool raymarch(const float3& ro, const float3& rd, flo
             //hitInfo.normal = normalize3(sub3(p, make_float3(0.0f, 0.0f, 0.0f)));
             //return true;
 
-            l_rd = add3(l_rd, mul3(h.normal, (-1 + (GRAV_DIST / h.sphereCenterDistance)) * 0.1f ));
+            l_rd = add3(l_rd, mul3(h.snormal, (-1 + (GRAV_DIST / h.sphereCenterDistance)) * 0.1f ));
         }
 
 
